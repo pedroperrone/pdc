@@ -3,6 +3,7 @@
 #include <v1model.p4>
 
 const bit<16> TYPE_IPV4 = 0x800;
+const bit<16> TYPE_INT = 0x9876;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
@@ -33,6 +34,18 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
+header root_int_t {
+    bit<32> amount_of_children;
+    bit<16> etherType;
+}
+
+header node_int_t {
+    bit<32> enq_timestamp;
+    bit<9> ingress_port;
+    bit<9> egress_port;
+    bit<32> switch_id;
+}
+
 struct metadata {
     /* empty */
 }
@@ -40,6 +53,7 @@ struct metadata {
 struct headers {
     ethernet_t   ethernet;
     ipv4_t       ipv4;
+    root_int_t   root_int;
 }
 
 /*************************************************************************
@@ -58,6 +72,25 @@ parser MyParser(packet_in packet,
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
+            TYPE_INT: parse_int_root;
+            default: put_int_root;
+        }
+    }
+
+    state parse_int_root {
+        packet.extract(hdr.root_int);
+
+        transition select(hdr.root_int.etherType) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
+    }
+
+    state put_int_root {
+        hdr.root_int = { 0, hdr.ethernet.etherType };
+        hdr.ethernet.etherType = TYPE_INT;
+
+        transition select(hdr.root_int.etherType) {
             TYPE_IPV4: parse_ipv4;
             default: accept;
         }
@@ -158,6 +191,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
+        packet.emit(hdr.root_int);
         packet.emit(hdr.ipv4);
     }
 }

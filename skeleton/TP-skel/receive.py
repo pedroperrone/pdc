@@ -6,8 +6,9 @@ import os
 from scapy.all import sniff, sendp, hexdump, get_if_list, get_if_hwaddr
 from scapy.all import Packet, IPOption
 from scapy.all import ShortField, IntField, LongField, BitField, FieldListField, FieldLenField
-from scapy.all import IP, TCP, UDP, Raw
+from scapy.all import IP, TCP, UDP, Raw, Ether
 from scapy.layers.inet import _IPOption_HDR
+from scapy.packet import bind_layers
 
 def get_if():
     ifs=get_if_list()
@@ -33,6 +34,12 @@ class IPOption_MRI(IPOption):
                                    [],
                                    IntField("", 0),
                                    length_from=lambda pkt:pkt.count*4) ]
+
+class INT(Packet):
+    name = "INTPacket "
+    fields_desc=[ IntField("amount_of_children", 0),
+                 BitField("next_protocol" , 0, 16) ]
+
 def handle_pkt(pkt):
     if TCP in pkt and pkt[TCP].dport == 1234:
         print "got a packet"
@@ -46,6 +53,7 @@ def main():
     iface = ifaces[0]
     print "sniffing on %s" % iface
     sys.stdout.flush()
+    bind_layers(Ether, INT, type=0x9876)
     sniff(iface = iface,
           prn = lambda x: handle_pkt(x))
 
