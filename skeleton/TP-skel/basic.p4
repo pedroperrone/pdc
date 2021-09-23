@@ -35,24 +35,30 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
-header int_t {
+header int_root_t {
+    bit<32> amount_of_children;
+    bit<16> etherType;
+}
+
+header int_node_t {
     bit<32> enq_timestamp;
     bit<9> ingress_port;
     bit<9> egress_port;
     bit<32> switch_id;
-    bit is_last;
     bit<16> etherType;
-    bit<5> padding;
+    bit<6> padding;
 }
 
 struct metadata {
     /* empty */
+    bit<32> processed_nodes;
 }
 
 struct headers {
     ethernet_t            ethernet;
     ipv4_t                ipv4;
-    int_t[MAX_SWITCHES]   int_stack;
+    int_root_t            int_root;
+    int_node_t[MAX_SWITCHES]   int_node_stack;
 }
 
 /*************************************************************************
@@ -71,40 +77,57 @@ parser MyParser(packet_in packet,
     state parse_ethernet {
         packet.extract(hdr.ethernet);
         transition select(hdr.ethernet.etherType) {
-            TYPE_INT: parse_int;
-            default: put_int;
+            TYPE_INT: parse_int_root;
+            default: put_int_root;
         }
     }
 
-    state put_int {
-        hdr.int_stack.next = { standard_metadata.enq_timestamp,
+    state parse_int_root {
+        packet.extract(hdr.int_root);
+        metadata.processed_nodes = 0;
+        transition parse_int_node;
+    }
+
+    state put_int_root {
+        hdr.int_root = { 0, hdr.ethernet.etherType };
+        hdr.int_node_stack[0] = { standard_metadata.enq_timestamp,
                                standard_metadata.ingress_port,
                                standard_metadata.egress_port,
                                0,
-                               1,
                                hdr.ethernet.etherType,
                                0 };
+
         hdr.ethernet.etherType = TYPE_INT;
 
-        transition select(hdr.int_stack.last.etherType) {
+        transition select(hdr.int_root.etherType) {
             TYPE_IPV4: parse_ipv4;
             default: accept;
         }
     }
 
-    state parse_int {
-        packet.extract(hdr.int_stack.next);
+    state parse_int_node {
+        packet.extract(hdr.int_node_stack.next);
+        meta.processed_nodes = meta.processed_nodes + 1;
 
-        transition select(hdr.int_stack.last.is_last) {
-            0: parse_int;
-            1: append_int;
+        transition select(meta.processed_nodes == hdr.int_root.amount_of_children) {
+            true: put_int_node;
+            default: parse_int_node;
         }
     }
 
-    state append_int {
-        hdr.int_stack[hdr.int_stack.lastIndex].is_last = 0;
+    state put_int_node {
+        hdr.int_node_stack.next = { standard_metadata.enq_timestamp,
+                                    standard_metadata.ingress_port,
+                                    standard_metadata.egress_port,
+                                    0,
+                                    hdr.ethernet.etherType,
+                                    0 };
+        hdr.int_root.amount_of_children = hdr.int_root.amount_of_children + 1;
 
-        transition put_int;
+        transition select(hdr.int_root.etherType) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
     }
 
     state parse_ipv4 {
@@ -202,7 +225,8 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.int_stack);
+        packet.emit(hdr.int_root);
+        packet.emit(hdr.int_node_stack);
         packet.emit(hdr.ipv4);
     }
 }
